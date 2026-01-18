@@ -1,0 +1,105 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <title>django-sio chat demo</title>
+    <style>
+      body { font-family: system-ui, sans-serif; max-width: 900px; margin: 20px auto; }
+      #log { border: 1px solid #ddd; padding: 12px; height: 420px; overflow: auto; }
+      .row { margin: 8px 0; display: flex; gap: 8px; }
+      input, button { padding: 8px; }
+      .msg { margin: 6px 0; }
+      .meta { color: #666; font-size: 12px; }
+    </style>
+  </head>
+  <body>
+    <h1>Chat</h1>
+
+    <div class="row">
+      <input id="username" placeholder="username" value="alice" />
+      <input id="room" placeholder="room" value="lobby" />
+      <button id="join">Join</button>
+      <button id="leave">Leave</button>
+    </div>
+
+    <div id="log"></div>
+
+    <div class="row">
+      <input id="text" placeholder="message..." style="flex: 1" />
+      <button id="send">Send</button>
+    </div>
+
+    <div class="meta" id="typing"></div>
+
+    <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+    <script>
+      const log = document.getElementById("log");
+      const typingEl = document.getElementById("typing");
+
+      function add(line) {
+        const div = document.createElement("div");
+        div.className = "msg";
+        div.textContent = line;
+        log.appendChild(div);
+        log.scrollTop = log.scrollHeight;
+      }
+
+      const socket = io({
+        path: "/socket.io/",
+        transports: ["websocket"],
+        auth: { username: document.getElementById("username").value },
+      });
+
+      socket.on("connect", () => add(`connected: ${socket.id}`));
+      socket.on("disconnect", (r) => add(`disconnect: ${r}`));
+      socket.on("error", (m) => add(`ERROR: ${m}`));
+
+      socket.on("joined", (room, history) => {
+        add(`joined ${room} (${history.length} history msgs)`);
+        for (const msg of history) add(`[${msg.user}] ${msg.text}`);
+      });
+
+      socket.on("user-joined", (room, user) => add(`${user} joined ${room}`));
+      socket.on("user-left", (room, user) => add(`${user} left ${room}`));
+
+      socket.on("message", (room, msg) => add(`[${room}] [${msg.user}] ${msg.text}`));
+
+      const typingState = new Map();
+      socket.on("typing", (room, user, isTyping) => {
+        typingState.set(user, !!isTyping);
+        const users = [...typingState.entries()].filter(([,v]) => v).map(([u]) => u);
+        typingEl.textContent = users.length ? `${users.join(", ")} typing...` : "";
+      });
+
+      document.getElementById("join").onclick = () => {
+        const room = document.getElementById("room").value.trim();
+        const username = document.getElementById("username").value.trim() || "anon";
+        socket.auth = { username };
+        socket.emit("join", room, username, (resp) => add(`join ack: ${JSON.stringify(resp)}`));
+      };
+
+      document.getElementById("leave").onclick = () => {
+        const room = document.getElementById("room").value.trim();
+        socket.emit("leave", room, (resp) => add(`leave ack: ${JSON.stringify(resp)}`));
+      };
+
+      const text = document.getElementById("text");
+      document.getElementById("send").onclick = () => {
+        const room = document.getElementById("room").value.trim();
+        const msg = text.value.trim();
+        if (!msg) return;
+        socket.emit("message", room, msg, (resp) => add(`send ack: ${JSON.stringify(resp)}`));
+        text.value = "";
+        socket.emit("typing", room, false);
+      };
+
+      let typingTimer = null;
+      text.addEventListener("input", () => {
+        const room = document.getElementById("room").value.trim();
+        socket.emit("typing", room, true);
+        clearTimeout(typingTimer);
+        typingTimer = setTimeout(() => socket.emit("typing", room, false), 800);
+      });
+    </script>
+  </body>
+</html>
